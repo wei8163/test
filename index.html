@@ -1,0 +1,76 @@
+<html>
+    <head>
+        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.7.0/dist/tf.min.js"></script>
+        <script>
+            async function main() {
+                const video = document.querySelector('video');
+                const canvas = document.querySelector('canvas');
+                const select = document.querySelector('select');
+
+                video.width = 640;
+                video.height = 480;
+                //video.style.display = 'none';
+                const webcam = await tf.data.webcam(video);
+                const model = await tf.loadGraphModel('model/model.json');
+
+                // Set initial recurrent state
+                let [r1i, r2i, r3i, r4i] = [tf.tensor(0.), tf.tensor(0.), tf.tensor(0.), tf.tensor(0.)];
+
+                // Set downsample ratio
+                const downsample_ratio = tf.tensor(0.5);
+
+                // Inference loop
+                while (true) {
+                    await tf.nextFrame();
+                    const img = await webcam.capture();
+                    const src = tf.tidy(() => img.expandDims(0).div(255)); // normalize input
+                    const [fgr, pha, r1o, r2o, r3o, r4o] = await model.executeAsync(
+                        {src, r1i, r2i, r3i, r4i, downsample_ratio}, // provide inputs
+                        ['fgr', 'pha', 'r1o', 'r2o', 'r3o', 'r4o']   // select outputs
+                    );
+                    
+                    drawMatte(fgr.clone(), pha.clone(), canvas);
+
+                    const bg = `url("image/1.jpg")`;
+                    if (canvas.style.background === bg) {
+                    // Do nothing
+                    } else if (canvas.style.background === 'none') {
+                        canvas.style.background = bg;
+                    } else {
+                        canvas.style.background = 'none';
+                    }    
+
+                    // Dispose old tensors.
+                    tf.dispose([img, src, fgr, pha, r1i, r2i, r3i, r4i]);
+
+                    // Update recurrent states.
+                    [r1i, r2i, r3i, r4i] = [r1o, r2o, r3o, r4o];
+                }
+            }
+
+            async function drawMatte(fgr, pha, canvas){
+                const rgba = tf.tidy(() => {
+                    const rgb = fgr.squeeze(0).mul(255).cast('int32')                 
+                    const a = pha.squeeze(0).mul(255).cast('int32')                   
+                    return tf.concat([rgb, a], -1);
+                });
+                fgr && fgr.dispose();
+                pha && pha.dispose();
+                const [height, width] = rgba.shape.slice(0, 2);
+                const pixelData = new Uint8ClampedArray(await rgba.data());
+                const imageData = new ImageData(pixelData, width, height);
+                canvas.width = width;
+                canvas.height = height;
+                canvas.getContext('2d').putImageData(imageData, 0, 0);
+                rgba.dispose();
+            }
+
+            window.addEventListener('load', main);
+        </script>
+    </head>
+    <body>
+        <br>
+        <video ></video>
+        <canvas></canvas>
+    </body>
+</html>
